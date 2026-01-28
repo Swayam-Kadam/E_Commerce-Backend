@@ -50,3 +50,11 @@ exports.authorize = (...roles) => {
     next();
   };
 };
+
+
+// Generate Access Token (short-lived)
+exports.generateAccessToken = (userId) => {
+  return jwt.sign({ id: userId }, process.env.JWT_SECRET, {
+    expiresIn: process.env.JWT_EXPIRE || '15m'  // Short expiry
+  });
+};

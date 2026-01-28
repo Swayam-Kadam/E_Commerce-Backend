@@ -1,5 +1,6 @@
 const express = require('express');
 const Product = require('../models/ProductSchema');
+const Review = require('../models/ReviewSchema');
 const { protect, authorize } = require('../middleware/auth');
 const { uploadProductImages } = require('../middleware/upload');
 
@@ -31,29 +32,56 @@ router.get('/', async (req, res) => {
 // @desc    Get single product
 // @route   GET /api/v1/products/:id
 // @access  Public (Both user and admin can access)
+// router.get('/:id', async (req, res) => {
+//   try {
+//     const product = await Product.findById(req.params.id)
+//       .populate('category', 'name')
+//       .populate('reviews', 'rating comment user');
+
+//     if (!product) {
+//       return res.status(404).json({
+//         success: false,
+//         message: 'Product not found'
+//       });
+//     }
+
+//     res.status(200).json({
+//       success: true,
+//       data: product
+//     });
+//   } catch (error) {
+//     console.error('Get product error:', error);
+//     res.status(500).json({
+//       success: false,
+//       message: 'Server error while fetching product'
+//     });
+//   }
+// });
+
+
 router.get('/:id', async (req, res) => {
   try {
-    const product = await Product.findById(req.params.id)
-      .populate('category', 'name')
-      .populate('reviews', 'rating comment user');
+    // Run both queries at the same time
+    const [product, reviews] = await Promise.all([
+      Product.findById(req.params.id).populate('category', 'name'),
+      Review.find({ product: req.params.id })
+            // .populate('user', 'username profile.firstName profile.lastName')
+            .sort({ createdAt: -1 })
+    ]);
 
     if (!product) {
-      return res.status(404).json({
-        success: false,
-        message: 'Product not found'
-      });
+      return res.status(404).json({ success: false, message: 'Product not found' });
     }
 
     res.status(200).json({
       success: true,
-      data: product
+      data: {
+        ...product._doc, // The product details
+        reviews: reviews  // The reviews we just fetched
+      }
     });
   } catch (error) {
-    console.error('Get product error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Server error while fetching product'
-    });
+    res.status(500).json({ success: false, message: 'Server error' });
   }
 });
 
@@ -124,7 +152,8 @@ router.post('/', protect, authorize('admin'), uploadProductImages, async (req, r
       stock,
       specifications,
       variants,
-      isBestSeller
+      isBestSeller,
+      averageRating
     } = req.body;
 
     // Validation
@@ -183,7 +212,8 @@ router.post('/', protect, authorize('admin'), uploadProductImages, async (req, r
       stock: stock ? parseInt(stock) : 0,
       specifications: specifications ? JSON.parse(specifications) : {},
       variants: variantsArray,
-      isBestSeller: isBestSeller === 'true'
+      isBestSeller: isBestSeller === 'true',
+      averageRating:averageRating
     });
 
     res.status(201).json({
@@ -205,34 +235,6 @@ router.post('/', protect, authorize('admin'), uploadProductImages, async (req, r
 // @desc    Update product
 // @route   PUT /api/v1/products/:id
 // @access  Private/Admin only
-// router.put('/:id', protect, authorize('admin'), async (req, res) => {
-//   try {
-//     const product = await Product.findByIdAndUpdate(
-//       req.params.id,
-//       req.body,
-//       { new: true, runValidators: true }
-//     );
-
-//     if (!product) {
-//       return res.status(404).json({
-//         success: false,
-//         message: 'Product not found'
-//       });
-//     }
-
-//     res.status(200).json({
-//       success: true,
-//       message: 'Product updated successfully',
-//       data: product
-//     });
-//   } catch (error) {
-//     console.error('Update product error:', error);
-//     res.status(500).json({
-//       success: false,
-//       message: 'Server error while updating product'
-//     });
-//   }
-// });
 
 router.put('/:id', protect, authorize('admin'), uploadProductImages, async (req, res) => {
   try {
@@ -246,7 +248,7 @@ router.put('/:id', protect, authorize('admin'), uploadProductImages, async (req,
     }
 
     // Fields that are allowed to be updated
-    const allowedFields = ['name', 'description', 'price', 'originalPrice', 'category', 'stock', 'specifications', 'variants', 'isBestSeller'];
+    const allowedFields = ['name', 'description', 'price', 'originalPrice', 'category', 'stock', 'specifications', 'variants', 'isBestSeller','averageRating','images'];
     const updateData = {};
 
     // Only include allowed fields

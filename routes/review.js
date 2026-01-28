@@ -1,13 +1,62 @@
 const express = require('express');
 const Review = require('../models/ReviewSchema');
 const Product = require('../models/ProductSchema');
+const User = require('../models/UserSchema');
 const { protect, authorize } = require('../middleware/auth');
 
 const router = express.Router();
 
+
+// router.get('/', async (req, res) => {
+//   try {
+//     const review = await Review.find()
+//     if (!review) {
+//       return res.status(404).json({
+//         success: false,
+//         message: 'Review not found'
+//       });
+//     }
+
+//     res.status(200).json({
+//       success: true,
+//       reviewCount: review.length,
+//       data: review
+//     });
+//   } catch (error) {
+//     console.error('Get review error:', error);
+//     res.status(500).json({
+//       success: false,
+//       message: 'Server error while fetching review'
+//     });
+//   }
+// });
+
 // @desc    Get all reviews for a specific product
 // @route   GET /api/v1/products/:productId/reviews
 // @access  Public
+
+router.get('/', async (req, res) => {
+  try {
+    // Fetch all reviews and populate user & product data
+    const reviews = await Review.find()
+      .populate('user', 'name email') // Populate user name and email
+      .populate('product', 'name image category price originalPrice') // Populate product details
+      .sort({ createdAt: -1 }); // Sort by newest first
+
+    res.status(200).json({
+      success: true,
+      reviewCount: reviews.length,
+      data: reviews
+    });
+  } catch (error) {
+    console.error('Get review error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Server error while fetching reviews'
+    });
+  }
+});
+
 router.get('/products/:productId', async (req, res) => {
   try {
     const reviews = await Review.find({ product: req.params.productId })
@@ -80,7 +129,7 @@ router.post('/products/:productId', protect, async (req, res) => {
       product: productId
     });
 
-    console.log('Debug - User:', req.user.id || req.user._id,productId);
+    console.log('Debug - User:', req.user.id || req.user._id);
      console.log('Existing review found:', existingReview);
 
     if (existingReview) {
