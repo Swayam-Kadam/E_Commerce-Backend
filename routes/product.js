@@ -3,6 +3,7 @@ const Product = require('../models/ProductSchema');
 const Review = require('../models/ReviewSchema');
 const { protect, authorize } = require('../middleware/auth');
 const { uploadProductImages } = require('../middleware/upload');
+const Wishlist = require('../models/WishlistSchema');
 
 const router = express.Router();
 
@@ -29,12 +30,68 @@ const router = express.Router();
 //   }
 // });
 
-router.get('/', async (req, res) => {
+// router.get('/', async (req, res) => {
+//   try {
+//     // Get products with populated category
+//     const products = await Product.find()
+//       .populate('category', 'name')
+//       .sort({ createdAt: -1 });
+
+//     // Get all reviews for these products in one query
+//     const productIds = products.map(p => p._id);
+//     const reviews = await Review.find({ product: { $in: productIds } })
+//       .populate('user', 'name email')
+//       .populate('product', 'name');
+
+//     // Group reviews by product ID
+//     const reviewsByProduct = {};
+//     reviews.forEach(review => {
+//       const productId = review.product._id.toString();
+//       if (!reviewsByProduct[productId]) {
+//         reviewsByProduct[productId] = [];
+//       }
+//       reviewsByProduct[productId].push(review);
+//     });
+
+//     // Combine products with their reviews
+//     const productsWithReviews = products.map(product => {
+//       const productReviews = reviewsByProduct[product._id.toString()] || [];
+//       const avgRating = productReviews.length > 0
+//         ? productReviews.reduce((sum, review) => sum + review.rating, 0) / productReviews.length
+//         : 0;
+
+//       return {
+//         ...product.toObject(),
+//         reviews: productReviews,
+//         averageRating: parseFloat(avgRating.toFixed(1)),
+//         reviewCount: productReviews.length
+//       };
+//     });
+
+//     res.status(200).json({
+//       success: true,
+//       count: productsWithReviews.length,
+//       data: productsWithReviews
+//     });
+//   } catch (error) {
+//     console.error('Get products error:', error);
+//     res.status(500).json({
+//       success: false,
+//       message: 'Server error while fetching products'
+//     });
+//   }
+// });
+
+router.get('/', protect, async (req, res) => {
   try {
     // Get products with populated category
     const products = await Product.find()
       .populate('category', 'name')
       .sort({ createdAt: -1 });
+
+    // Get user's wishlist
+    const wishlist = await Wishlist.findOne({ user: req.user.id });
+    const wishlistProductIds = wishlist ? wishlist.products.map(id => id.toString()) : [];
 
     // Get all reviews for these products in one query
     const productIds = products.map(p => p._id);
@@ -52,7 +109,7 @@ router.get('/', async (req, res) => {
       reviewsByProduct[productId].push(review);
     });
 
-    // Combine products with their reviews
+    // Combine products with their reviews and wishlist status
     const productsWithReviews = products.map(product => {
       const productReviews = reviewsByProduct[product._id.toString()] || [];
       const avgRating = productReviews.length > 0
@@ -63,7 +120,8 @@ router.get('/', async (req, res) => {
         ...product.toObject(),
         reviews: productReviews,
         averageRating: parseFloat(avgRating.toFixed(1)),
-        reviewCount: productReviews.length
+        reviewCount: productReviews.length,
+        isWishlist: wishlistProductIds.includes(product._id.toString())
       };
     });
 
