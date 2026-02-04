@@ -12,6 +12,7 @@ env
 *.env
 **/.env
 
+
 # testing
 /coverage
 

@@ -9,16 +9,68 @@ const router = express.Router();
 // @desc    Get all products
 // @route   GET /api/v1/products
 // @access  Public (Both user and admin can access)
+// router.get('/', async (req, res) => {
+//   try {
+//     const products = await Product.find()
+//       .populate('category', 'name')
+//       .sort({ createdAt: -1 });
+
+//     res.status(200).json({
+//       success: true,
+//       count: products.length,
+//       data: products
+//     });
+//   } catch (error) {
+//     console.error('Get products error:', error);
+//     res.status(500).json({
+//       success: false,
+//       message: 'Server error while fetching products'
+//     });
+//   }
+// });
+
 router.get('/', async (req, res) => {
   try {
+    // Get products with populated category
     const products = await Product.find()
       .populate('category', 'name')
       .sort({ createdAt: -1 });
 
+    // Get all reviews for these products in one query
+    const productIds = products.map(p => p._id);
+    const reviews = await Review.find({ product: { $in: productIds } })
+      .populate('user', 'name email')
+      .populate('product', 'name');
+
+    // Group reviews by product ID
+    const reviewsByProduct = {};
+    reviews.forEach(review => {
+      const productId = review.product._id.toString();
+      if (!reviewsByProduct[productId]) {
+        reviewsByProduct[productId] = [];
+      }
+      reviewsByProduct[productId].push(review);
+    });
+
+    // Combine products with their reviews
+    const productsWithReviews = products.map(product => {
+      const productReviews = reviewsByProduct[product._id.toString()] || [];
+      const avgRating = productReviews.length > 0
+        ? productReviews.reduce((sum, review) => sum + review.rating, 0) / productReviews.length
+        : 0;
+
+      return {
+        ...product.toObject(),
+        reviews: productReviews,
+        averageRating: parseFloat(avgRating.toFixed(1)),
+        reviewCount: productReviews.length
+      };
+    });
+
     res.status(200).json({
       success: true,
-      count: products.length,
-      data: products
+      count: productsWithReviews.length,
+      data: productsWithReviews
     });
   } catch (error) {
     console.error('Get products error:', error);

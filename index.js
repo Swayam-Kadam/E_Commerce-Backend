@@ -18,6 +18,7 @@ app.use(cookieParser());
 app.use('/api/v1/auth',require('./routes/auth'));
 app.use('/api/v1/product',require('./routes/product'));
 app.use('/api/v1/review',require('./routes/review'));
+app.use('/api/v1/whishlist',require('./routes/whishlist'));
 
 
 app.listen(port,()=>{
