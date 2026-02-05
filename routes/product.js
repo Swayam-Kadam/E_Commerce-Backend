@@ -142,34 +142,8 @@ router.get('/', protect, async (req, res) => {
 // @desc    Get single product
 // @route   GET /api/v1/products/:id
 // @access  Public (Both user and admin can access)
-// router.get('/:id', async (req, res) => {
-//   try {
-//     const product = await Product.findById(req.params.id)
-//       .populate('category', 'name')
-//       .populate('reviews', 'rating comment user');
 
-//     if (!product) {
-//       return res.status(404).json({
-//         success: false,
-//         message: 'Product not found'
-//       });
-//     }
-
-//     res.status(200).json({
-//       success: true,
-//       data: product
-//     });
-//   } catch (error) {
-//     console.error('Get product error:', error);
-//     res.status(500).json({
-//       success: false,
-//       message: 'Server error while fetching product'
-//     });
-//   }
-// });
-
-
-router.get('/:id', async (req, res) => {
+router.get('/:id',protect , async (req, res) => {
   try {
     // Run both queries at the same time
     const [product, reviews] = await Promise.all([
@@ -183,11 +157,16 @@ router.get('/:id', async (req, res) => {
       return res.status(404).json({ success: false, message: 'Product not found' });
     }
 
+    // Get user's wishlist - FIXED: Use req.user.id instead of req.params.id
+    const wishlist = await Wishlist.findOne({ user: req.user.id });
+    const wishlistProductIds = wishlist ? wishlist.products.map(id => id.toString()) : [];
+
     res.status(200).json({
       success: true,
       data: {
         ...product._doc, // The product details
-        reviews: reviews  // The reviews we just fetched
+        reviews: reviews,  // The reviews we just fetched
+        isWishlist: wishlistProductIds.includes(product._id.toString())
       }
     });
   } catch (error) {
