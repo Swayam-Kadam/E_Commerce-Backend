@@ -1,6 +1,7 @@
 const express = require('express');
 const Product = require('../models/ProductSchema');
 const Review = require('../models/ReviewSchema');
+const Cart = require('../models/CartSchema');
 const { protect, authorize } = require('../middleware/auth');
 const { uploadProductImages } = require('../middleware/upload');
 const Wishlist = require('../models/WishlistSchema');
@@ -10,32 +11,17 @@ const router = express.Router();
 // @desc    Get all products
 // @route   GET /api/v1/products
 // @access  Public (Both user and admin can access)
-// router.get('/', async (req, res) => {
-//   try {
-//     const products = await Product.find()
-//       .populate('category', 'name')
-//       .sort({ createdAt: -1 });
 
-//     res.status(200).json({
-//       success: true,
-//       count: products.length,
-//       data: products
-//     });
-//   } catch (error) {
-//     console.error('Get products error:', error);
-//     res.status(500).json({
-//       success: false,
-//       message: 'Server error while fetching products'
-//     });
-//   }
-// });
-
-// router.get('/', async (req, res) => {
+// router.get('/', protect, async (req, res) => {
 //   try {
 //     // Get products with populated category
 //     const products = await Product.find()
 //       .populate('category', 'name')
 //       .sort({ createdAt: -1 });
+
+//     // Get user's wishlist
+//     const wishlist = await Wishlist.findOne({ user: req.user.id });
+//     const wishlistProductIds = wishlist ? wishlist.products.map(id => id.toString()) : [];
 
 //     // Get all reviews for these products in one query
 //     const productIds = products.map(p => p._id);
@@ -53,7 +39,7 @@ const router = express.Router();
 //       reviewsByProduct[productId].push(review);
 //     });
 
-//     // Combine products with their reviews
+//     // Combine products with their reviews and wishlist status
 //     const productsWithReviews = products.map(product => {
 //       const productReviews = reviewsByProduct[product._id.toString()] || [];
 //       const avgRating = productReviews.length > 0
@@ -64,7 +50,8 @@ const router = express.Router();
 //         ...product.toObject(),
 //         reviews: productReviews,
 //         averageRating: parseFloat(avgRating.toFixed(1)),
-//         reviewCount: productReviews.length
+//         reviewCount: productReviews.length,
+//         isWishlist: wishlistProductIds.includes(product._id.toString())
 //       };
 //     });
 
@@ -93,6 +80,22 @@ router.get('/', protect, async (req, res) => {
     const wishlist = await Wishlist.findOne({ user: req.user.id });
     const wishlistProductIds = wishlist ? wishlist.products.map(id => id.toString()) : [];
 
+    // Get user's cart
+    const cart = await Cart.findOne({ user: req.user.id });
+    const cartItemsMap = {};
+    
+    if (cart && cart.items.length > 0) {
+      // Create a map of productId to cart item details
+      cart.items.forEach(item => {
+        cartItemsMap[item.product.toString()] = {
+          inCart: true,
+          cartItemId: item._id,
+          quantity: item.quantity,
+          variant: item.variant || {}
+        };
+      });
+    }
+
     // Get all reviews for these products in one query
     const productIds = products.map(p => p._id);
     const reviews = await Review.find({ product: { $in: productIds } })
@@ -109,9 +112,10 @@ router.get('/', protect, async (req, res) => {
       reviewsByProduct[productId].push(review);
     });
 
-    // Combine products with their reviews and wishlist status
+    // Combine products with their reviews, wishlist, and cart status
     const productsWithReviews = products.map(product => {
-      const productReviews = reviewsByProduct[product._id.toString()] || [];
+      const productIdStr = product._id.toString();
+      const productReviews = reviewsByProduct[productIdStr] || [];
       const avgRating = productReviews.length > 0
         ? productReviews.reduce((sum, review) => sum + review.rating, 0) / productReviews.length
         : 0;
@@ -121,7 +125,13 @@ router.get('/', protect, async (req, res) => {
         reviews: productReviews,
         averageRating: parseFloat(avgRating.toFixed(1)),
         reviewCount: productReviews.length,
-        isWishlist: wishlistProductIds.includes(product._id.toString())
+        isWishlist: wishlistProductIds.includes(productIdStr),
+        cartInfo: cartItemsMap[productIdStr] || {
+          inCart: false,
+          cartItemId: null,
+          quantity: 0,
+          variant: {}
+        }
       };
     });
 
@@ -143,34 +153,98 @@ router.get('/', protect, async (req, res) => {
 // @route   GET /api/v1/products/:id
 // @access  Public (Both user and admin can access)
 
-router.get('/:id',protect , async (req, res) => {
+// router.get('/:id',protect , async (req, res) => {
+//   try {
+//     // Run both queries at the same time
+//     const [product, reviews] = await Promise.all([
+//       Product.findById(req.params.id).populate('category', 'name'),
+//       Review.find({ product: req.params.id })
+//             // .populate('user', 'username profile.firstName profile.lastName')
+//             .sort({ createdAt: -1 })
+//     ]);
+
+//     if (!product) {
+//       return res.status(404).json({ success: false, message: 'Product not found' });
+//     }
+
+//     // Get user's wishlist - FIXED: Use req.user.id instead of req.params.id
+//     const wishlist = await Wishlist.findOne({ user: req.user.id });
+//     const wishlistProductIds = wishlist ? wishlist.products.map(id => id.toString()) : [];
+
+//     res.status(200).json({
+//       success: true,
+//       data: {
+//         ...product._doc, // The product details
+//         reviews: reviews,  // The reviews we just fetched
+//         isWishlist: wishlistProductIds.includes(product._id.toString())
+//       }
+//     });
+//   } catch (error) {
+//     res.status(500).json({ success: false, message: 'Server error' });
+//   }
+// });
+
+router.get('/:id', protect, async (req, res) => {
   try {
-    // Run both queries at the same time
-    const [product, reviews] = await Promise.all([
+    // Run queries in parallel
+    const [product, reviews, cart, wishlist] = await Promise.all([
       Product.findById(req.params.id).populate('category', 'name'),
       Review.find({ product: req.params.id })
-            // .populate('user', 'username profile.firstName profile.lastName')
-            .sort({ createdAt: -1 })
+            .sort({ createdAt: -1 }),
+      Cart.findOne({ user: req.user.id }),
+      Wishlist.findOne({ user: req.user.id })
     ]);
 
     if (!product) {
       return res.status(404).json({ success: false, message: 'Product not found' });
     }
 
-    // Get user's wishlist - FIXED: Use req.user.id instead of req.params.id
-    const wishlist = await Wishlist.findOne({ user: req.user.id });
+    // Check if product is in cart
+    let cartInfo = {
+      inCart: false,
+      cartItemId: null,
+      quantity: 0,
+      variant: {}
+    };
+
+    if (cart) {
+      const cartItem = cart.items.find(item => 
+        item.product.toString() === req.params.id.toString()
+      );
+      
+      if (cartItem) {
+        cartInfo = {
+          inCart: true,
+          cartItemId: cartItem._id,
+          quantity: cartItem.quantity,
+          variant: cartItem.variant || {}
+        };
+      }
+    }
+
+    // Check if product is in wishlist
     const wishlistProductIds = wishlist ? wishlist.products.map(id => id.toString()) : [];
+    const isWishlist = wishlistProductIds.includes(product._id.toString());
 
     res.status(200).json({
       success: true,
       data: {
-        ...product._doc, // The product details
-        reviews: reviews,  // The reviews we just fetched
-        isWishlist: wishlistProductIds.includes(product._id.toString())
+        ...product._doc,
+        reviews: reviews,
+        averageRating: reviews.length > 0 ? 
+          reviews.reduce((sum, review) => sum + review.rating, 0) / reviews.length : 0,
+        reviewCount: reviews.length,
+        isWishlist: isWishlist,
+        cartInfo: cartInfo
       }
     });
   } catch (error) {
-    res.status(500).json({ success: false, message: 'Server error' });
+    console.error('Get single product error:', error);
+    res.status(500).json({ 
+      success: false, 
+      message: 'Server error while fetching product',
+      error: error.message 
+    });
   }
 });
 
