@@ -2,6 +2,7 @@ const express = require('express');
 const Wishlist = require('../models/WishlistSchema');
 const Product = require('../models/ProductSchema');
 const { protect } = require('../middleware/auth');
+const Cart = require('../models/CartSchema');
 
 const router = express.Router();
 
@@ -10,30 +11,66 @@ const router = express.Router();
 // @access  Private
 router.get('/', protect, async (req, res) => {
   try {
-    const wishlist = await Wishlist.findOne({ user: req.user.id })
-      .populate({
+    // Run queries in parallel
+    const [wishlist, cart] = await Promise.all([
+      Wishlist.findOne({ user: req.user.id }).populate({
         path: 'products',
         select: 'name price images stock averageRating isBestSeller discount category originalPrice'
-      });
+      }),
+      Cart.findOne({ user: req.user.id })
+    ]);
 
+    // Create cart items map
+    const cartItemsMap = {};
+    if (cart && cart.items.length > 0) {
+      cart.items.forEach(item => {
+        cartItemsMap[item.product.toString()] = {
+          inCart: true,
+          cartItemId: item._id,
+          quantity: item.quantity,
+          variant: item.variant || {}
+        };
+      });
+    }
+
+    // Handle empty wishlist
     if (!wishlist) {
-      // Create empty wishlist if doesn't exist
       const newWishlist = await Wishlist.create({
         user: req.user.id,
-        products: []
+        products: [],
       });
       
       return res.status(200).json({
         success: true,
         count: 0,
-        data: newWishlist
+        data: {
+          ...newWishlist.toObject(),
+          products: [] // Empty array with no cart info needed
+        }
       });
     }
 
+    // Enrich wishlist products with cart information
+    const enrichedWishlist = {
+      ...wishlist.toObject(),
+      products: wishlist.products.map(product => {
+        const productIdStr = product._id.toString();
+        return {
+          ...product.toObject(),
+          cartInfo: cartItemsMap[productIdStr] || {
+            inCart: false,
+            cartItemId: null,
+            quantity: 0,
+            variant: {}
+          }
+        };
+      })
+    };
+
     res.status(200).json({
       success: true,
-      count: wishlist.products.length,
-      data: wishlist
+      count: enrichedWishlist.products.length,
+      data: enrichedWishlist
     });
   } catch (error) {
     console.error('Get wishlist error:', error);
