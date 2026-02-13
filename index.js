@@ -20,6 +20,7 @@ app.use('/api/v1/product',require('./routes/product'));
 app.use('/api/v1/review',require('./routes/review'));
 app.use('/api/v1/whishlist',require('./routes/whishlist'));
 app.use('/api/v1/cart',require('./routes/cart'));
+app.use('/api/v1/payment',require('./routes/payment'));
 
 
 app.listen(port,()=>{
