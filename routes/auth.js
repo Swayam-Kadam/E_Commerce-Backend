@@ -358,6 +358,14 @@ router.get('/profile', async (req, res) => {
         profile: user.profile,
         address: user.addresses,
         whislist: user.wishlist,
+        settings: {
+          notifications: {
+            email: user.settings?.notifications?.email ?? true,
+            sms: user.settings?.notifications?.sms ?? true,
+            promotional: user.settings?.notifications?.promotional ?? true,
+            orderUpdates: user.settings?.notifications?.orderUpdates ?? true
+          }
+        },
         createdAt: user.createdAt,
       }
     });

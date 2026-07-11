@@ -36,7 +36,15 @@ const userSchema = new mongoose.Schema({
     country: String,
     isDefault: Boolean
   }],
-  wishlist: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Product' }],
+  wishlist: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Products' }],
+  settings: {
+    notifications: {
+      email: { type: Boolean, default: true },
+      sms: { type: Boolean, default: true },
+      promotional: { type: Boolean, default: true },
+      orderUpdates: { type: Boolean, default: true }
+    }
+  },
   createdAt: { type: Date, default: Date.now }
 });
 

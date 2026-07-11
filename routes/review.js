@@ -39,9 +39,9 @@ router.get('/', async (req, res) => {
   try {
     // Fetch all reviews and populate user & product data
     const reviews = await Review.find()
-      .populate('user', 'name email') // Populate user name and email
-      .populate('product', 'name image category price originalPrice') // Populate product details
-      .sort({ createdAt: -1 }); // Sort by newest first
+      .populate('user', 'username email profile.firstName profile.lastName')
+      .populate('product', 'name images category price originalPrice')
+      .sort({ createdAt: -1 });
 
     res.status(200).json({
       success: true,
