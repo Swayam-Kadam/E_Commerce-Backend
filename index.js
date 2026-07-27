@@ -3,6 +3,7 @@ const express = require('express')
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
 require('dotenv').config();
+const errorHandler = require('./middleware/errorMiddleware');
 
 connecToMongo();
 const app = express()
@@ -24,9 +25,10 @@ app.use('/api/v1/payment',require('./routes/payment'));
 app.use('/api/v1/order',require('./routes/order'));
 app.use('/api/v1/settings',require('./routes/settings'));
 app.use('/api/v1/dashboard',require('./routes/dashboard'));
+app.use('/api/v1/coupon',require('./routes/coupon'));
 
+app.use(errorHandler);
 
 app.listen(port,()=>{
     console.log(`App Listening at http://localhost:${port}`)
 })
-

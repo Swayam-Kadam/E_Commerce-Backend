@@ -6,7 +6,7 @@ const productSchema = new mongoose.Schema({
   description: { type: String, required: true },
   price: { type: Number, required: true },
   originalPrice: Number, // Original price for showing discounts
-  category: { type: String, required: true },
+  category: { type: mongoose.Schema.Types.ObjectId, ref: 'Category', required: true },
    images: [{
     url: String,
     public_id: String, // Cloudinary public ID for deletion
