@@ -18,6 +18,7 @@ app.use(cookieParser());
 // Mount routers
 app.use('/api/v1/auth',require('./routes/auth'));
 app.use('/api/v1/product',require('./routes/product'));
+app.use('/api/v1/category',require('./routes/category'));
 app.use('/api/v1/review',require('./routes/review'));
 app.use('/api/v1/whishlist',require('./routes/whishlist'));
 app.use('/api/v1/cart',require('./routes/cart'));

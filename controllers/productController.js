@@ -16,7 +16,8 @@ exports.getProducts = async (req, res, next) => {
       minPrice, 
       maxPrice, 
       rating, 
-      inStock, 
+      inStock,
+      isBestSeller,
       sort, 
       page, 
       limit
@@ -69,11 +70,17 @@ exports.getProducts = async (req, res, next) => {
       query.stock = 0;
     }
 
+    // 6. Bestseller Filter
+    if (isBestSeller === 'true') {
+      query.isBestSeller = true;
+    }
+
     // Pagination setup — only apply when page/limit are explicitly provided
     // so storefront/admin list calls still receive the full catalog by default
     const hasPagination = req.query.page != null || req.query.limit != null;
-    const pageNum = parseInt(page, 10) || 1;
-    const limitNum = parseInt(limit, 10) || 12;
+    const pageNum = Math.max(parseInt(page, 10) || 1, 1);
+    const rawLimit = parseInt(limit, 10) || 12;
+    const limitNum = hasPagination ? Math.min(Math.max(rawLimit, 1), 24) : rawLimit;
     const skip = (pageNum - 1) * limitNum;
 
     // Get total count for pagination metadata
