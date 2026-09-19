@@ -2,6 +2,7 @@ const Cart = require('../models/CartSchema');
 const Product = require('../models/ProductSchema');
 const Coupon = require('../models/CouponSchema');
 const ErrorResponse = require('../utils/errorResponse');
+const { getAvailableStock } = require('../utils/productVariants');
 
 // Helper function to recalculate cart subtotal, discount, and final total
 const recalculateCart = async (cart) => {
@@ -47,7 +48,6 @@ const recalculateCart = async (cart) => {
     cart.discount = 0;
     cart.total = subtotal;
   }
-  cart.updatedAt = Date.now();
 };
 
 // @desc    Get user's cart
@@ -98,42 +98,56 @@ exports.getCart = async (req, res, next) => {
 // @access  Private
 exports.addCart = async (req, res, next) => {
   try {
-    const { productId, variant = {}, quantity = 1 } = req.body;
+    const { productId, variant = {}, quantity = 1, variantSku = null } = req.body;
 
     if (!productId) {
       return next(new ErrorResponse('Product ID is required', 400));
     }
 
     const product = await Product.findById(productId);
-    if (!product) {
+    if (!product || product.isActive === false) {
       return next(new ErrorResponse('Product not found', 404));
     }
 
-    if (product.stock < quantity) {
-      return next(new ErrorResponse(`Only ${product.stock} items available in stock`, 400));
+    let resolvedSku = variantSku || null;
+    if (!resolvedSku && product.variants?.length > 0 && (variant.color || variant.size)) {
+      const match = product.variants.find(
+        (v) =>
+          (variant.color == null || v.color === variant.color) &&
+          (variant.size == null || v.size === variant.size)
+      );
+      if (match) resolvedSku = match.sku;
+    }
+
+    const available = getAvailableStock(product, resolvedSku, variant);
+    if (available < quantity) {
+      return next(new ErrorResponse(`Only ${available} items available in stock`, 400));
     }
 
     let cart = await Cart.findOne({ user: req.user.id });
 
+    const linePayload = {
+      product: productId,
+      variant: {
+        color: variant.color || null,
+        size: variant.size || null
+      },
+      variantSku: resolvedSku,
+      quantity: quantity,
+      price: product.price
+    };
+
     if (!cart) {
       cart = await Cart.create({
         user: req.user.id,
-        items: [{
-          product: productId,
-          variant: {
-            color: variant.color || null,
-            size: variant.size || null
-          },
-          quantity: quantity,
-          price: product.price
-        }],
+        items: [linePayload],
         total: product.price * quantity
       });
       
       const populatedCart = await Cart.findById(cart._id)
         .populate({
           path: 'items.product',
-          select: 'name price images stock'
+          select: 'name price images stock variants'
         });
 
       return res.status(200).json({
@@ -147,35 +161,34 @@ exports.addCart = async (req, res, next) => {
       });
     }
 
-    // Check if variant matches
-    const existingItemIndex = cart.items.findIndex(item => 
-      item.product.toString() === productId.toString() &&
-      item.variant.color === (variant.color || null) &&
-      item.variant.size === (variant.size || null)
-    );
+    // Check if variant matches (prefer SKU when present)
+    const existingItemIndex = cart.items.findIndex(item => {
+      const sameProduct = item.product.toString() === productId.toString();
+      if (!sameProduct) return false;
+      if (resolvedSku || item.variantSku) {
+        return (item.variantSku || null) === (resolvedSku || null);
+      }
+      return (
+        item.variant.color === (variant.color || null) &&
+        item.variant.size === (variant.size || null)
+      );
+    });
 
     let action = '';
     
     if (existingItemIndex > -1) {
       const newQuantity = cart.items[existingItemIndex].quantity + quantity;
       
-      if (product.stock < newQuantity) {
-        return next(new ErrorResponse(`Only ${product.stock} items available in stock. You already have ${cart.items[existingItemIndex].quantity} in cart.`, 400));
+      if (available < newQuantity) {
+        return next(new ErrorResponse(`Only ${available} items available in stock. You already have ${cart.items[existingItemIndex].quantity} in cart.`, 400));
       }
       
       cart.items[existingItemIndex].quantity = newQuantity;
       cart.items[existingItemIndex].price = product.price;
+      cart.items[existingItemIndex].variantSku = resolvedSku;
       action = 'updated';
     } else {
-      cart.items.push({
-        product: productId,
-        variant: {
-          color: variant.color || null,
-          size: variant.size || null
-        },
-        quantity: quantity,
-        price: product.price
-      });
+      cart.items.push(linePayload);
       action = 'added';
     }
 
@@ -185,7 +198,7 @@ exports.addCart = async (req, res, next) => {
     const populatedCart = await Cart.findById(cart._id)
       .populate({
         path: 'items.product',
-        select: 'name price images stock'
+        select: 'name price images stock variants'
       })
       .populate('coupon', 'code discountType discountValue');
 
@@ -231,8 +244,10 @@ exports.updateItemQuantity = async (req, res, next) => {
       return next(new ErrorResponse('Product not found', 404));
     }
 
-    if (product.stock < quantity) {
-      return next(new ErrorResponse(`Only ${product.stock} items available in stock`, 400));
+    const line = cart.items[itemIndex];
+    const available = getAvailableStock(product, line.variantSku, line.variant);
+    if (available < quantity) {
+      return next(new ErrorResponse(`Only ${available} items available in stock`, 400));
     }
 
     cart.items[itemIndex].quantity = quantity;
@@ -403,6 +418,13 @@ exports.applyCoupon = async (req, res, next) => {
       return next(new ErrorResponse('Coupon usage limit reached', 400));
     }
 
+    const alreadyUsed = (couponObj.usedBy || []).some(
+      (entry) => entry.user && entry.user.toString() === req.user.id.toString()
+    );
+    if (alreadyUsed) {
+      return next(new ErrorResponse('You have already used this coupon', 400));
+    }
+
     // Calculate subtotal
     let subtotal = 0;
     cart.items.forEach(item => {
@@ -456,7 +478,6 @@ exports.removeCoupon = async (req, res, next) => {
       subtotal += item.price * item.quantity;
     });
     cart.total = subtotal;
-    cart.updatedAt = Date.now();
 
     await cart.save();
 

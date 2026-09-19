@@ -45,8 +45,8 @@ exports.register = async (req, res, next) => {
       return next(new ErrorResponse('Please provide username, email, and password', 400));
     }
     
-    if (password.trim().length === 0) {
-      return next(new ErrorResponse('Password cannot be empty', 400));
+    if (password.trim().length < 8) {
+      return next(new ErrorResponse('Password must be at least 8 characters', 400));
     }
     
     const existingUser = await User.findOne({ $or: [{ email }, { username }] });
@@ -109,7 +109,7 @@ exports.login = async (req, res, next) => {
       return next(new ErrorResponse('Password cannot be empty', 400));
     }
 
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ email }).select('+password +refreshToken');
     
     if (!user) {
       return next(new ErrorResponse('Invalid email or password', 401));
@@ -171,8 +171,8 @@ exports.refreshToken = async (req, res, next) => {
     // Find user with this refresh token and check if it's not expired
     const user = await User.findOne({ 
       refreshToken,
-      refreshTokenExpiry: { $gt: new Date() } // Not expired
-    });
+      refreshTokenExpiry: { $gt: new Date() }
+    }).select('+refreshToken +refreshTokenExpiry');
     
     if (!user) {
       return next(new ErrorResponse('Invalid or expired refresh token', 401));
@@ -245,16 +245,16 @@ exports.logoutAll = async (req, res, next) => {
       return next(new ErrorResponse('Refresh token is required', 400));
     }
     
-    const user = await User.findOne({ refreshToken });
+    const user = await User.findOne({ refreshToken }).select('+refreshToken +refreshTokenExpiry');
     
     if (!user) {
       return next(new ErrorResponse('User not found', 404));
     }
-    
+
     user.refreshToken = null;
     user.refreshTokenExpiry = null;
     await user.save();
-    
+
     res.status(200).json({
       success: true,
       message: 'Logged out from all devices successfully'
@@ -284,7 +284,6 @@ exports.getProfile = async (req, res, next) => {
         role: user.role,
         profile: user.profile,
         address: user.addresses,
-        whislist: user.wishlist,
         settings: {
           notifications: {
             email: user.settings?.notifications?.email ?? true,
@@ -374,7 +373,7 @@ exports.updateProfile = async (req, res, next) => {
       updateData.email = email;
     }
 
-    // Only existing admins may change roles; ignore refreshToken/wishlist from body
+    // Only existing admins may change roles; ignore refreshToken from body
     if (role !== undefined) {
       if (user.role !== 'admin') {
         return next(new ErrorResponse('Only admin can change user roles', 403));
@@ -395,7 +394,7 @@ exports.updateProfile = async (req, res, next) => {
       user._id,
       { $set: updateData },
       { new: true, runValidators: true }
-    ).select('-password -refreshToken');
+    ).select('-password -refreshToken -refreshTokenExpiry');
 
     res.status(200).json({
       success: true,
@@ -407,7 +406,6 @@ exports.updateProfile = async (req, res, next) => {
         role: updatedUser.role,
         profile: updatedUser.profile,
         addresses: updatedUser.addresses,
-        wishlist: updatedUser.wishlist,
         createdAt: updatedUser.createdAt
       }
     });

@@ -6,6 +6,7 @@ const Order = require('../models/OrderSchema');
 const Coupon = require('../models/CouponSchema');
 const ErrorResponse = require('../utils/errorResponse');
 const { decrementStockIfAvailable } = require('../utils/stock');
+const { getAvailableStock } = require('../utils/productVariants');
 
 // Initialize Razorpay lazily so tests don't break if environment variables are not set
 const getRazorpayInstance = () => {
@@ -69,7 +70,6 @@ const recordOutOfStockAfterPay = async ({
       razorpayOrderId: razorpay_order_id,
       razorpayPaymentId: razorpay_payment_id,
       razorpaySignature: razorpay_signature,
-      updatedAt: Date.now(),
     });
   } catch (error) {
     if (isDuplicateKeyError(error)) {
@@ -112,7 +112,7 @@ exports.createOrder = async (req, res, next) => {
 
     const cart = await Cart.findOne({ user: req.user.id }).populate({
       path: 'items.product',
-      select: 'name price stock',
+      select: 'name price stock variants isActive',
     });
 
     if (!cart || cart.items.length === 0) {
@@ -122,15 +122,20 @@ exports.createOrder = async (req, res, next) => {
     // Non-authoritative stock pre-check (UX). Final safety is in verifyPayment.
     let subtotal = 0;
     for (const item of cart.items) {
-      if (!item.product) {
+      if (!item.product || item.product.isActive === false) {
         return next(
           new ErrorResponse('One or more products in your cart no longer exist', 400)
         );
       }
-      if (item.product.stock < item.quantity) {
+      const available = getAvailableStock(
+        item.product,
+        item.variantSku,
+        item.variant
+      );
+      if (available < item.quantity) {
         return next(
           new ErrorResponse(
-            `Only ${item.product.stock} unit(s) of "${item.product.name}" available in stock`,
+            `Only ${available} unit(s) of "${item.product.name}" available in stock`,
             400
           )
         );
@@ -268,7 +273,7 @@ exports.verifyPayment = async (req, res, next) => {
     // 4) Fresh cart read
     const cart = await Cart.findOne({ user: req.user.id }).populate({
       path: 'items.product',
-      select: 'name price stock',
+      select: 'name price stock variants isActive',
     });
 
     if (!cart || cart.items.length === 0) {
@@ -279,7 +284,7 @@ exports.verifyPayment = async (req, res, next) => {
     let subtotal = 0;
 
     for (const item of cart.items) {
-      if (!item.product) {
+      if (!item.product || item.product.isActive === false) {
         return next(
           new ErrorResponse('One or more products in your cart no longer exist', 400)
         );
@@ -288,6 +293,7 @@ exports.verifyPayment = async (req, res, next) => {
         product: item.product._id,
         name: item.product.name,
         variant: item.variant,
+        variantSku: item.variantSku || null,
         quantity: item.quantity,
         price: item.product.price,
       });
@@ -311,12 +317,15 @@ exports.verifyPayment = async (req, res, next) => {
       );
     }
 
-    const lineItemsForOrder = orderItems.map(({ product, variant, quantity, price }) => ({
-      product,
-      variant,
-      quantity,
-      price,
-    }));
+    const lineItemsForOrder = orderItems.map(
+      ({ product, variant, variantSku, quantity, price }) => ({
+        product,
+        variant,
+        variantSku: variantSku || null,
+        quantity,
+        price,
+      })
+    );
 
     let createdOrderId = null;
     let outOfStockProductName = null;
@@ -328,7 +337,8 @@ exports.verifyPayment = async (req, res, next) => {
           const ok = await decrementStockIfAvailable(
             item.product,
             item.quantity,
-            session
+            session,
+            item.variantSku || null
           );
           if (!ok) {
             const failed = orderItems.find(
@@ -359,7 +369,6 @@ exports.verifyPayment = async (req, res, next) => {
               razorpayOrderId: razorpay_order_id,
               razorpayPaymentId: razorpay_payment_id,
               razorpaySignature: razorpay_signature,
-              updatedAt: Date.now(),
             },
           ],
           { session }
@@ -370,7 +379,10 @@ exports.verifyPayment = async (req, res, next) => {
         if (cart.coupon) {
           await Coupon.findByIdAndUpdate(
             cart.coupon,
-            { $inc: { usedCount: 1 } },
+            {
+              $inc: { usedCount: 1 },
+              $push: { usedBy: { user: req.user.id, usedAt: new Date() } },
+            },
             { session }
           );
         }
@@ -379,12 +391,10 @@ exports.verifyPayment = async (req, res, next) => {
         cart.total = 0;
         cart.coupon = null;
         cart.discount = 0;
-        cart.updatedAt = Date.now();
         await cart.save({ session });
       });
     } catch (txnError) {
       if (txnError.code === 'OUT_OF_STOCK' || txnError.message === 'OUT_OF_STOCK') {
-        // Payment valid but stock lost the race — record cancelled recovery order
         console.error(
           `[payment] OUT_OF_STOCK after pay user=${req.user.id} payment=${razorpay_payment_id} product=${txnError.productName || outOfStockProductName}`
         );
@@ -401,7 +411,6 @@ exports.verifyPayment = async (req, res, next) => {
           razorpay_signature,
         });
 
-        // TODO: enqueue Razorpay refund for razorpay_payment_id
         const populatedRecovery = recovery
           ? await populateOrder(recovery._id)
           : null;

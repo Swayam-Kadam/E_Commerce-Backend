@@ -3,29 +3,31 @@ const Review = require('../models/ReviewSchema');
 const Product = require('../models/ProductSchema');
 const ErrorResponse = require('../utils/errorResponse');
 
-// Helper function to update product's average rating (aggregated)
+// Helper: denormalize averageRating + reviewCount from Review collection only
 const updateProductAverageRating = async (productId) => {
   try {
     const stats = await Review.aggregate([
       {
-        $match: { product: new mongoose.Types.ObjectId(productId) } // FIX: Ensure Cast to ObjectId
+        $match: { product: new mongoose.Types.ObjectId(productId) },
       },
       {
         $group: {
           _id: '$product',
           averageRating: { $avg: '$rating' },
-          numberOfReviews: { $sum: 1 }
-        }
-      }
+          numberOfReviews: { $sum: 1 },
+        },
+      },
     ]);
 
     if (stats.length > 0) {
       await Product.findByIdAndUpdate(productId, {
-        averageRating: Math.round(stats[0].averageRating * 10) / 10
+        averageRating: Math.round(stats[0].averageRating * 10) / 10,
+        reviewCount: stats[0].numberOfReviews,
       });
     } else {
       await Product.findByIdAndUpdate(productId, {
-        averageRating: 0
+        averageRating: 0,
+        reviewCount: 0,
       });
     }
   } catch (error) {

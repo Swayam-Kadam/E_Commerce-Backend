@@ -4,7 +4,8 @@
   "main": "index.js",
   "scripts": {
     "start": "nodemon index.js",
-    "test": "cross-env NODE_ENV=test jest --runInBand --detectOpenHandles --forceExit"
+    "test": "cross-env NODE_ENV=test jest --runInBand --detectOpenHandles --forceExit",
+    "migrate:schemas-v2": "node scripts/migrateSchemasToV2.js"
   },
   "author": "",
   "license": "ISC",
