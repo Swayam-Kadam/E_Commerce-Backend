@@ -7,6 +7,7 @@ const Coupon = require('../models/CouponSchema');
 const ErrorResponse = require('../utils/errorResponse');
 const { decrementStockIfAvailable } = require('../utils/stock');
 const { getAvailableStock } = require('../utils/productVariants');
+const { delByPrefix } = require('../utils/cache');
 
 // Initialize Razorpay lazily so tests don't break if environment variables are not set
 const getRazorpayInstance = () => {
@@ -444,6 +445,9 @@ exports.verifyPayment = async (req, res, next) => {
     }
 
     const populatedOrder = await populateOrder(createdOrderId);
+
+    // Stock changed — drop anonymous product list cache so storefront stock is fresh
+    await delByPrefix('products:list:');
 
     res.status(201).json({
       success: true,

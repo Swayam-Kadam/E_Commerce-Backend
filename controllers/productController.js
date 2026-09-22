@@ -7,12 +7,31 @@ const ErrorResponse = require('../utils/errorResponse');
 const { uniqueSlug } = require('../utils/slug');
 const { parseVariantsInput } = require('../utils/parseVariants');
 const { normalizeVariants } = require('../utils/productVariants');
+const { getJson, setJson, del, delByPrefix } = require('../utils/cache');
+
+
+function buildProductListCacheKey(query) {
+  const keys = Object.keys(query).sort();
+  const parts = keys.map((k) => `${k}=${query[k] ?? ''}`);
+  return `products:list:${parts.join('&') || 'default'}`;
+}
 
 // @desc    Get all products
 // @route   GET /api/v1/product
 // @access  Public
 exports.getProducts = async (req, res, next) => {
   try {
+
+    const isAnonymous = !req.user;
+    const cacheKey = isAnonymous ? buildProductListCacheKey(req.query) : null;
+
+    if (cacheKey) {
+      const cached = await getJson(cacheKey);
+      if (cached) {
+        return res.status(200).json(cached);
+      }
+    }
+
     const {
       search,
       category,
@@ -158,7 +177,7 @@ exports.getProducts = async (req, res, next) => {
       };
     });
 
-    res.status(200).json({
+    const body = {
       success: true,
       count: enrichedProducts.length,
       pagination: hasPagination
@@ -175,7 +194,13 @@ exports.getProducts = async (req, res, next) => {
             limit: total,
           },
       data: enrichedProducts,
-    });
+    };
+    
+    if (cacheKey) {
+      await setJson(cacheKey, body, 60);
+    }
+    
+    return res.status(200).json(body);
   } catch (error) {
     next(error);
   }
@@ -316,6 +341,7 @@ exports.createProduct = async (req, res, next) => {
     }
 
     let categoryId = category;
+    let categoryCreated = false;
     if (!category.match(/^[0-9a-fA-F]{24}$/)) {
       let foundCategory = await Category.findOne({
         name: { $regex: `^${category}$`, $options: 'i' },
@@ -323,6 +349,7 @@ exports.createProduct = async (req, res, next) => {
       if (!foundCategory) {
         const catSlug = await uniqueSlug(Category, category);
         foundCategory = await Category.create({ name: category, slug: catSlug });
+        categoryCreated = true;
       }
       categoryId = foundCategory._id;
     }
@@ -377,6 +404,11 @@ exports.createProduct = async (req, res, next) => {
       await product.save();
     }
 
+    await delByPrefix('products:list:');
+    if (categoryCreated) {
+      await del('categories:active');
+    }
+
     res.status(201).json({
       success: true,
       message: 'Product created successfully',
@@ -428,6 +460,7 @@ exports.updateProduct = async (req, res, next) => {
       }
     }
 
+    let categoryCreated = false;
     if (updateData.category && !String(updateData.category).match(/^[0-9a-fA-F]{24}$/)) {
       let foundCategory = await Category.findOne({
         name: { $regex: `^${updateData.category}$`, $options: 'i' },
@@ -438,6 +471,7 @@ exports.updateProduct = async (req, res, next) => {
           name: updateData.category,
           slug: catSlug,
         });
+        categoryCreated = true;
       }
       updateData.category = foundCategory._id;
     }
@@ -493,6 +527,11 @@ exports.updateProduct = async (req, res, next) => {
       { new: true, runValidators: true }
     );
 
+    await delByPrefix('products:list:');
+    if (categoryCreated) {
+      await del('categories:active');
+    }
+
     res.status(200).json({
       success: true,
       message: 'Product updated successfully',
@@ -517,6 +556,8 @@ exports.deleteProduct = async (req, res, next) => {
     if (!product) {
       return next(new ErrorResponse('Product not found', 404));
     }
+
+    await delByPrefix('products:list:');
 
     res.status(200).json({
       success: true,

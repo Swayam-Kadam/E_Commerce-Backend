@@ -4,6 +4,8 @@ const cors = require('cors');
 const cookieParser = require('cookie-parser');
 require('dotenv').config();
 const errorHandler = require('./middleware/errorMiddleware');
+const { getRedis } = require('./config/redis');
+const { apiLimiter } = require('./middleware/rateLimiter');
 
 connecToMongo();
 const app = express()
@@ -13,7 +15,12 @@ app.use(express.json())
 app.use(express.urlencoded({ extended: true })); // For form data
 app.use(cors());
 app.use(cookieParser());
+getRedis().ready.catch(err => {
+    console.error('Redis connection failed:', err);
+});
 
+// Global API rate limit (auth routes also use a stricter authLimiter)
+// app.use('/api', apiLimiter);
 
 // Mount routers
 app.use('/api/v1/auth',require('./routes/auth'));

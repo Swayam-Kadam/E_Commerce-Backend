@@ -43,7 +43,14 @@ const orderSchema = new mongoose.Schema(
     },
     orderStatus: {
       type: String,
-      enum: ['pending', 'processing', 'shipped', 'delivered', 'cancelled'],
+      enum: [
+        'pending',
+        'processing',
+        'shipped',
+        'delivered',
+        'cancelled',
+        'returned',
+      ],
       default: 'pending',
     },
     cancelReason: {
@@ -51,6 +58,16 @@ const orderSchema = new mongoose.Schema(
       enum: ['OUT_OF_STOCK', 'PAYMENT_ISSUE', 'CUSTOMER', 'ADMIN', 'OTHER'],
       default: undefined,
     },
+    returnStatus: {
+      type: String,
+      enum: ['none', 'requested', 'approved', 'completed', 'rejected'],
+      default: 'none',
+    },
+    returnReason: { type: String, default: null },
+    deliveredAt: { type: Date, default: null },
+    cancelledAt: { type: Date, default: null },
+    returnedAt: { type: Date, default: null },
+    refundId: { type: String, default: null },
     trackingNumber: String,
     razorpayOrderId: { type: String, default: null },
     razorpayPaymentId: { type: String, default: null },
