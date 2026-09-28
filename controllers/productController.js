@@ -16,20 +16,76 @@ function buildProductListCacheKey(query) {
   return `products:list:${parts.join('&') || 'default'}`;
 }
 
+function emptyCartInfo() {
+  return {
+    inCart: false,
+    cartItemId: null,
+    quantity: 0,
+    variant: {},
+    variantSku: null,
+  };
+}
+
+async function loadUserProductFlags(user) {
+  const wishlistProductIds = [];
+  const cartItemsMap = {};
+
+  if (!user) {
+    return { wishlistProductIds, cartItemsMap };
+  }
+
+  const [wishlist, cart] = await Promise.all([
+    Wishlist.findOne({ user: user.id }),
+    Cart.findOne({ user: user.id }),
+  ]);
+
+  if (wishlist) {
+    wishlist.products.forEach((id) => wishlistProductIds.push(id.toString()));
+  }
+
+  if (cart && cart.items.length > 0) {
+    cart.items.forEach((item) => {
+      cartItemsMap[item.product.toString()] = {
+        inCart: true,
+        cartItemId: item._id,
+        quantity: item.quantity,
+        variant: item.variant || {},
+        variantSku: item.variantSku || null,
+      };
+    });
+  }
+
+  return { wishlistProductIds, cartItemsMap };
+}
+
+function applyUserFlags(products, wishlistProductIds, cartItemsMap) {
+  return products.map((product) => {
+    const pIdStr = String(product._id || product.id);
+    return {
+      ...product,
+      isWishlist: wishlistProductIds.includes(pIdStr),
+      cartInfo: cartItemsMap[pIdStr] || emptyCartInfo(),
+    };
+  });
+}
+
 // @desc    Get all products
 // @route   GET /api/v1/product
 // @access  Public
 exports.getProducts = async (req, res, next) => {
   try {
+    const cacheKey = buildProductListCacheKey(req.query);
+    const cached = await getJson(cacheKey);
 
-    const isAnonymous = !req.user;
-    const cacheKey = isAnonymous ? buildProductListCacheKey(req.query) : null;
-
-    if (cacheKey) {
-      const cached = await getJson(cacheKey);
-      if (cached) {
-        return res.status(200).json(cached);
+    if (cached) {
+      const body = JSON.parse(JSON.stringify(cached));
+      if (req.user && Array.isArray(body.data)) {
+        const { wishlistProductIds, cartItemsMap } = await loadUserProductFlags(
+          req.user
+        );
+        body.data = applyUserFlags(body.data, wishlistProductIds, cartItemsMap);
       }
+      return res.status(200).json(body);
     }
 
     const {
@@ -112,32 +168,6 @@ exports.getProducts = async (req, res, next) => {
 
     const products = await dbQuery;
 
-    let wishlistProductIds = [];
-    const cartItemsMap = {};
-
-    if (req.user) {
-      const [wishlist, cart] = await Promise.all([
-        Wishlist.findOne({ user: req.user.id }),
-        Cart.findOne({ user: req.user.id }),
-      ]);
-
-      if (wishlist) {
-        wishlistProductIds = wishlist.products.map((id) => id.toString());
-      }
-
-      if (cart && cart.items.length > 0) {
-        cart.items.forEach((item) => {
-          cartItemsMap[item.product.toString()] = {
-            inCart: true,
-            cartItemId: item._id,
-            quantity: item.quantity,
-            variant: item.variant || {},
-            variantSku: item.variantSku || null,
-          };
-        });
-      }
-    }
-
     const productIds = products.map((p) => p._id);
     const reviews = await Review.find({ product: { $in: productIds } })
       .populate('user', 'username email')
@@ -166,14 +196,8 @@ exports.getProducts = async (req, res, next) => {
         reviews: productReviews,
         averageRating: parseFloat(avgRating.toFixed(1)),
         reviewCount: product.reviewCount ?? productReviews.length,
-        isWishlist: wishlistProductIds.includes(pIdStr),
-        cartInfo: cartItemsMap[pIdStr] || {
-          inCart: false,
-          cartItemId: null,
-          quantity: 0,
-          variant: {},
-          variantSku: null,
-        },
+        isWishlist: false,
+        cartInfo: emptyCartInfo(),
       };
     });
 
@@ -196,11 +220,21 @@ exports.getProducts = async (req, res, next) => {
       data: enrichedProducts,
     };
     
-    if (cacheKey) {
-      await setJson(cacheKey, body, 60);
+    await setJson(cacheKey, body, 60);
+
+    const responseBody = JSON.parse(JSON.stringify(body));
+    if (req.user) {
+      const { wishlistProductIds, cartItemsMap } = await loadUserProductFlags(
+        req.user
+      );
+      responseBody.data = applyUserFlags(
+        responseBody.data,
+        wishlistProductIds,
+        cartItemsMap
+      );
     }
-    
-    return res.status(200).json(body);
+
+    return res.status(200).json(responseBody);
   } catch (error) {
     next(error);
   }
