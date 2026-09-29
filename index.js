@@ -11,6 +11,10 @@ connecToMongo();
 const app = express()
 const port = 4000
 
+app.get('/health', (req, res) => {
+    res.status(200).json({ status: 'ok' });
+  });
+
 app.use(express.json())
 app.use(express.urlencoded({ extended: true })); // For form data
 app.use(cors());
