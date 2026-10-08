@@ -5,6 +5,7 @@ const Cart = require('../models/CartSchema');
 const Wishlist = require('../models/WishlistSchema');
 const Order = require('../models/OrderSchema');
 const { protect } = require('../middleware/auth');
+const { MIN_PASSWORD_LENGTH, passwordLengthError } = require('../utils/passwordPolicy');
 
 const router = express.Router();
 
@@ -111,10 +112,11 @@ router.put('/change-password', protect, async (req, res) => {
       });
     }
 
-    if (newPassword.length < 6) {
+    const passwordError = passwordLengthError(newPassword);
+    if (passwordError) {
       return res.status(400).json({
         success: false,
-        message: 'New password must be at least 6 characters'
+        message: `New password must be at least ${MIN_PASSWORD_LENGTH} characters`
       });
     }
 
@@ -125,7 +127,7 @@ router.put('/change-password', protect, async (req, res) => {
       });
     }
 
-    const user = await User.findById(req.user.id);
+    const user = await User.findById(req.user.id).select('+password');
     if (!user || !user.password) {
       return res.status(404).json({
         success: false,
@@ -172,8 +174,8 @@ router.delete('/account', protect, async (req, res) => {
       });
     }
 
-    const user = await User.findById(req.user.id);
-    if (!user) {
+    const user = await User.findById(req.user.id).select('+password');
+    if (!user || !user.password) {
       return res.status(404).json({
         success: false,
         message: 'User not found'

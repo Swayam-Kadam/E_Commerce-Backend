@@ -2,7 +2,11 @@ const rateLimit = require('express-rate-limit');
 const { RedisStore } = require('rate-limit-redis');
 const { getRedis } = require('../config/redis');
 
-function createRedisStore(prefix) {
+function createStore(prefix) {
+  if (process.env.NODE_ENV === 'test') {
+    return undefined;
+  }
+
   const { client } = getRedis();
   return new RedisStore({
     prefix,
@@ -19,7 +23,7 @@ exports.apiLimiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
-  store: createRedisStore('rl:api:'),
+  store: createStore('rl:api:'),
 });
 
 exports.authLimiter = rateLimit({
@@ -32,5 +36,5 @@ exports.authLimiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
-  store: createRedisStore('rl:auth:'),
+  store: createStore('rl:auth:'),
 });

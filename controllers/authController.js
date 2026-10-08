@@ -3,6 +3,8 @@ const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const User = require('../models/UserSchema');
 const ErrorResponse = require('../utils/errorResponse');
+const { passwordLengthError } = require('../utils/passwordPolicy');
+const { hashRefreshToken } = require('../utils/refreshToken');
 
 // Generate Access Token (short-lived - 15 minutes)
 const generateAccessToken = (userId) => {
@@ -34,6 +36,26 @@ const comparePassword = async (enteredPassword, hashedPassword) => {
   return await bcrypt.compare(enteredPassword, hashedPassword);
 };
 
+async function findByStoredRefreshToken(rawToken, { checkExpiry = true } = {}) {
+  const tokenHash = hashRefreshToken(rawToken);
+  const select = '+refreshToken +refreshTokenExpiry';
+  const expiryFilter = checkExpiry
+    ? { refreshTokenExpiry: { $gt: new Date() } }
+    : {};
+
+  const byHash = await User.findOne({
+    refreshToken: tokenHash,
+    ...expiryFilter,
+  }).select(select);
+
+  if (byHash) return byHash;
+
+  return User.findOne({
+    refreshToken: rawToken,
+    ...expiryFilter,
+  }).select(select);
+}
+
 // @desc    Register user
 // @route   POST /api/v1/auth/register
 // @access  Public
@@ -45,8 +67,9 @@ exports.register = async (req, res, next) => {
       return next(new ErrorResponse('Please provide username, email, and password', 400));
     }
     
-    if (password.trim().length < 8) {
-      return next(new ErrorResponse('Password must be at least 8 characters', 400));
+    const passwordError = passwordLengthError(password);
+    if (passwordError) {
+      return next(new ErrorResponse(passwordError, 400));
     }
     
     const existingUser = await User.findOne({ $or: [{ email }, { username }] });
@@ -66,7 +89,7 @@ exports.register = async (req, res, next) => {
       email,
       password: hashedPassword,
       role: 'user',
-      refreshToken,
+      refreshToken: hashRefreshToken(refreshToken),
       refreshTokenExpiry
     });
     
@@ -131,8 +154,8 @@ exports.login = async (req, res, next) => {
     const refreshToken = generateRefreshToken();
     const refreshTokenExpiry = setRefreshTokenExpiry();
 
-    // Save refresh token to database
-    user.refreshToken = refreshToken;
+    // Store only a hash; the raw token is returned to the client
+    user.refreshToken = hashRefreshToken(refreshToken);
     user.refreshTokenExpiry = refreshTokenExpiry;
     await user.save();
 
@@ -168,11 +191,7 @@ exports.refreshToken = async (req, res, next) => {
       return next(new ErrorResponse('Refresh token is required', 400));
     }
     
-    // Find user with this refresh token and check if it's not expired
-    const user = await User.findOne({ 
-      refreshToken,
-      refreshTokenExpiry: { $gt: new Date() }
-    }).select('+refreshToken +refreshTokenExpiry');
+    const user = await findByStoredRefreshToken(refreshToken);
     
     if (!user) {
       return next(new ErrorResponse('Invalid or expired refresh token', 401));
@@ -185,8 +204,7 @@ exports.refreshToken = async (req, res, next) => {
     const newRefreshToken = generateRefreshToken();
     const newRefreshTokenExpiry = setRefreshTokenExpiry();
     
-    // Update user with new refresh token
-    user.refreshToken = newRefreshToken;
+    user.refreshToken = hashRefreshToken(newRefreshToken);
     user.refreshTokenExpiry = newRefreshTokenExpiry;
     await user.save();
     
@@ -216,12 +234,12 @@ exports.logout = async (req, res, next) => {
       return next(new ErrorResponse('Refresh token is required', 400));
     }
     
-    // Clear refresh token from database
-    await User.findOneAndUpdate(
-      { refreshToken },
-      { 
+    const tokenHash = hashRefreshToken(refreshToken);
+    await User.updateOne(
+      { refreshToken: { $in: [tokenHash, refreshToken] } },
+      {
         refreshToken: null,
-        refreshTokenExpiry: null 
+        refreshTokenExpiry: null
       }
     );
     
@@ -245,7 +263,7 @@ exports.logoutAll = async (req, res, next) => {
       return next(new ErrorResponse('Refresh token is required', 400));
     }
     
-    const user = await User.findOne({ refreshToken }).select('+refreshToken +refreshTokenExpiry');
+    const user = await findByStoredRefreshToken(refreshToken, { checkExpiry: false });
     
     if (!user) {
       return next(new ErrorResponse('User not found', 404));

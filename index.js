@@ -1,46 +1,68 @@
-const connecToMongo = require('./config/db')
-const express = require('express')
-const cors = require('cors');
-const cookieParser = require('cookie-parser');
 require('dotenv').config();
-const errorHandler = require('./middleware/errorMiddleware');
+
+const mongoose = require('mongoose');
+const validateEnv = require('./config/env');
+const connecToMongo = require('./config/db');
 const { getRedis } = require('./config/redis');
-const { apiLimiter } = require('./middleware/rateLimiter');
+const logger = require('./utils/logger');
+const app = require('./app');
 
-connecToMongo();
-const app = express()
-const port = 4000
+const port = Number(process.env.PORT) || 4000;
 
-app.get('/health', (req, res) => {
-    res.status(200).json({ status: 'ok' });
+function registerShutdown(server) {
+  let shuttingDown = false;
+
+  const shutdown = (signal, exitCode = 0) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    logger.info(`Shutting down (${signal})`);
+
+    const forceExit = setTimeout(() => {
+      logger.error('Forced shutdown after timeout');
+      process.exit(exitCode || 1);
+    }, 10000);
+    forceExit.unref();
+
+    server.close(async () => {
+      try {
+        await mongoose.disconnect();
+        const { client } = getRedis();
+        if (client.isOpen) {
+          await client.quit();
+        }
+      } catch (error) {
+        logger.error(`Error during shutdown: ${error.message}`);
+      } finally {
+        clearTimeout(forceExit);
+        process.exit(exitCode);
+      }
+    });
+  };
+
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('unhandledRejection', (reason) => {
+    const message = reason instanceof Error ? reason.message : String(reason);
+    logger.error(`Unhandled rejection: ${message}`);
+    shutdown('unhandledRejection', 1);
   });
+}
 
-app.use(express.json())
-app.use(express.urlencoded({ extended: true })); // For form data
-app.use(cors());
-app.use(cookieParser());
-getRedis().ready.catch(err => {
-    console.error('Redis connection failed:', err);
-});
+async function start() {
+  try {
+    validateEnv();
+    await connecToMongo();
+    await getRedis().ready;
 
-// Global API rate limit (auth routes also use a stricter authLimiter)
-// app.use('/api', apiLimiter);
+    const server = app.listen(port, () => {
+      logger.info(`App listening on port ${port}`);
+    });
 
-// Mount routers
-app.use('/api/v1/auth',require('./routes/auth'));
-app.use('/api/v1/product',require('./routes/product'));
-app.use('/api/v1/category',require('./routes/category'));
-app.use('/api/v1/review',require('./routes/review'));
-app.use('/api/v1/whishlist',require('./routes/whishlist'));
-app.use('/api/v1/cart',require('./routes/cart'));
-app.use('/api/v1/payment',require('./routes/payment'));
-app.use('/api/v1/order',require('./routes/order'));
-app.use('/api/v1/settings',require('./routes/settings'));
-app.use('/api/v1/dashboard',require('./routes/dashboard'));
-app.use('/api/v1/coupon',require('./routes/coupon'));
+    registerShutdown(server);
+  } catch (error) {
+    logger.error(`Failed to start: ${error.message}`);
+    process.exit(1);
+  }
+}
 
-app.use(errorHandler);
-
-app.listen(port,()=>{
-    console.log(`App Listening at http://localhost:${port}`)
-})
+start();
